@@ -1,4 +1,4 @@
-# Detail Daemon
+# Stable Diffusion Forge: Detail Daemon
 This is an extension for [Stable Diffusion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui), [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge), and [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) which allows users to adjust the amount of detail/smoothness in an image, during the sampling steps. 
 
 It uses no LORAs, ControlNets, etc., and as a result its performance is not biased towards any certain style and it introduces no new stylistic or semantic features of its own into the generation. This also means that it can work with any model and on any type of image.
