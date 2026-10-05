@@ -65,6 +65,26 @@ Or go to your WebUI folder and manually clone this repo into your extensions fol
 ## Getting Started
 After installation you can find the extension in your txt2img and img2img tabs. 
 ![2025-11-05 15_35_36-011689](https://github.com/user-attachments/assets/ada23a0a-6867-4201-a16c-18d76b3417a1)
+### Presets:
+Pick a **Preset** above the daemon tabs to start from a tested shape instead of a blank schedule. It fills the daemons it uses (tab I, and tab II for the two-daemon presets), switches the other tabs off without clearing them, and shows a one-line description. Everything stays editable afterwards; the dropdown itself is not saved.
+
+| Preset | Daemons | What it is for |
+|---|---|---|
+| Subtle detail | 1 | A light lift that suits almost any image |
+| Balanced detail | 1 | Clearly more detail without changing the picture; a good everyday setting |
+| Fine texture (skin, fabric, hair) | 1 | Late steps only: small texture, composition untouched |
+| Mid-scale detail (scenery, architecture) | 1 | Middle steps: more objects, folds and structure |
+| Rich detail + cleanup | 2 | I adds a lot of detail, II removes the excess noise at the very end |
+| Smoother, cleaner | 1 | Less detail, for clean illustration and anime styles |
+| Hires fix detail | 2 | I for the first pass, II for the Hires fix pass |
+
+In `both` mode the effect grows with CFG, so the preset amounts are written for CFG 6 and rescaled to the CFG you have set when you pick the preset (at CFG 3 they are doubled, at CFG 9 they are two thirds). If you change CFG afterwards, pick the preset again. These are starting points, not rules: adjust **Detail Amount** first, then **Start** / **End**. The presets live in `dd_presets.py` and are easy to edit or extend.
+
+**How many daemons?** One covers most images; two for detail-plus-cleanup or for a separate Hires fix pass. More than three is rarely needed, so `Settings > Detail Daemon > Daemon count` = 3 keeps the panel lighter (it only has to be as high as the largest number of daemons in the images you paste).
+
+### Saving your defaults:
+`Settings > Defaults > Apply` now saves every daemon tab separately in `ui-config.json` (tab I under `customscript/detail_daemon.py/...` as before, tab II under `customscript/detail_daemon.py/II/...` and so on), and the graphs and sliders show the saved values when the UI loads. Previously all tabs shared tab I's entries: only tab I was saved, and its values were copied into every tab on load.
+
 ### Sliders:
 The sliders (and that one checkbox) set the amount of adjustment (positive values → add detail, negative values → remove detail) and the sampling steps during which it is applied (i.e. the schedule). So the X axis of the graph is your sampling steps, normalized to the (0,1) range, and the Y axis is the amount of adjustment. The rest is pretty self-explanatory I think. Just drag things and look at the graph for changes.
 ### Numbers:
@@ -83,3 +103,10 @@ I'll write up some proper docs on how best to set the parameters, as soon as pos
 - It works with Forge (`cond` and `uncond` modes are not supported).
 - It's not the same as AlignYourSteps, FreeU, etc.
 - It is similar (in what it sets out to do, not in how it does it) to the [ReSharpen Extension](https://github.com/Haoming02/sd-webui-resharpen) by Haoming.
+
+## Changes in this version
+- Each daemon tab saves its own defaults in `ui-config.json`; graphs and sliders reflect them on load.
+- Presets with a one-line description, rescaled to the current CFG (`dd_presets.py`).
+- The thumbnails above the tabs no longer catch clicks meant for the tab buttons.
+
+Presets and the saved-defaults fix were built with help from **Claude**, Anthropic's AI assistant.

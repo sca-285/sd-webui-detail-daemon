@@ -1,4 +1,6 @@
+import json
 import os
+import sys
 import gradio as gr
 import numpy as np
 from tqdm import tqdm
@@ -8,9 +10,15 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import modules.scripts as scripts
-from modules.script_callbacks import on_cfg_denoiser, remove_callbacks_for_function, on_infotext_pasted, on_ui_settings
+from modules.script_callbacks import on_cfg_denoiser, remove_callbacks_for_function, on_infotext_pasted, on_ui_settings, on_ui_tabs
 from modules.ui_components import InputAccordion
 from modules import shared
+
+EXTENSION_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if EXTENSION_ROOT not in sys.path:
+    sys.path.insert(0, EXTENSION_ROOT)
+
+import dd_presets  # noqa: E402
 
 try:
     import modules_forge.forge_version
@@ -64,10 +72,83 @@ def parse_infotext(infotext, params):
 on_infotext_pasted(parse_infotext)
 
 
+# ------------------------------------------------------------ saved defaults
+#
+# The WebUI saves defaults (ui-config.json) under "<tab>/<label>/value". Every
+# daemon tab uses the same labels, so all tabs shared one key: only tab I was
+# saved, and on load its values were copied into every tab. Here each tab gets
+# its own key through custom_script_source ("detail_daemon.py" for tab I, as
+# before, so existing saved values still apply; "detail_daemon.py/II" and so on
+# for the others). The host sets custom_script_source right after ui() returns,
+# so it is corrected in on_ui_tabs, which runs after that and before the saved
+# values are applied.
+#
+# The three slider mirrors (Detail Amount, Start Offset, End Offset) only echo
+# the number boxes, which are what the daemon reads. They are not saved; they
+# and the graphs are set from the saved numbers here instead.
+
+ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+SCRIPT_FILE = os.path.basename(__file__)
+_pending_tabs = []   # filled by Script.ui(), consumed by _apply_saved_defaults()
+
+
+def _tab_source(i):
+    return SCRIPT_FILE if i == 0 else f"{SCRIPT_FILE}/{ROMAN[i]}"
+
+
+def _plot_value(component, fig):
+    """A figure in the form a freshly created gr.Plot holds (Gradio 3 and 4)."""
+    value = component.postprocess(fig)
+    return value.model_dump() if hasattr(value, "model_dump") else value
+
+
+def _apply_saved_defaults():
+    if not _pending_tabs:
+        return []
+    try:
+        with open(shared.cmd_opts.ui_config_file, "r", encoding="utf8") as f:
+            saved = json.load(f)
+    except Exception:
+        saved = {}
+    for entry in _pending_tabs:
+        source = _tab_source(entry["index"])
+        values = {}
+        for name, comp in entry["saved"].items():
+            comp.custom_script_source = source
+            key = f"customscript/{source}/{entry['tabname']}/{comp.label}/value"
+            values[name] = saved.get(key, comp.value)
+        try:
+            for name, slider in entry["mirrors"].items():
+                v = float(values[name])
+                slider.value = min(max(v, slider.minimum), slider.maximum)
+            vis, thumb = entry["script"].visualize(
+                bool(values["active"]), float(values["start"]), float(values["end"]), float(values["bias"]),
+                float(values["amount"]), float(values["exponent"]), float(values["start_offset"]),
+                float(values["end_offset"]), float(values["fade"]), bool(values["smooth"]),
+                values["mode"], bool(values["hires"]))
+            entry["vis"].value = _plot_value(entry["vis"], vis)
+            entry["thumb"].value = _plot_value(entry["thumb"], thumb)
+        except Exception as e:
+            tqdm.write(f"\033[33mDetail Daemon:\033[0m could not restore saved graph for tab {ROMAN[entry['index']]}: {e}")
+    _pending_tabs.clear()
+    return []
+
+
+on_ui_tabs(_apply_saved_defaults)
+
+
 class Script(scripts.Script):
 
     def __init__(self):
-        self.tab_param_count = 0 
+        self.tab_param_count = 0
+        self.last_vis = None
+        self.last_thumb = None
+        self.cfg_component = None
+
+    def after_component(self, component, **kwargs):
+        # The CFG slider of this tab, so presets can match their strength to it.
+        if kwargs.get("elem_id") == f"{'img2img' if self.is_img2img else 'txt2img'}_cfg_scale":
+            self.cfg_component = component
 
     def title(self):
         return "Detail Daemon"
@@ -83,11 +164,19 @@ class Script(scripts.Script):
             return d.get(old_key)
 
         daemon_count = shared.opts.data.get("detail_daemon_count", 6)
+        tabname = "img2img" if is_img2img else "txt2img"
         all_params = []
-        
+        preset_outputs = []   # per tab: 12 params, 3 slider mirrors, graph, thumbnail
+
         with InputAccordion(False, label="Detail Daemon", elem_id=self.elem_id('detail-daemon')) as gr_enabled:
             all_params.append(gr_enabled)
             self.infotext_fields = [(gr_enabled, lambda d: 'Detail Daemon' in d or 'DD_enabled' in d)]
+            with gr.Row(elem_classes=['detail-daemon-preset-row']):
+                gr_preset = gr.Dropdown(dd_presets.CHOICES, value=dd_presets.CUSTOM, label="Preset",
+                                        elem_id=self.elem_id('detail-daemon-preset'),
+                                        elem_classes=['detail-daemon-preset'])
+            gr_preset.do_not_save_to_config = True
+            gr_preset_about = gr.Markdown("", elem_classes=['detail-daemon-preset-about'])
             thumbs = []
             with gr.Group():
                 with gr.Row(elem_classes=['detail-daemon-thumb-group']):
@@ -97,7 +186,7 @@ class Script(scripts.Script):
                         thumbs.append(gr_thumb)
             with gr.Group(elem_classes=['detail-daemon-tab-group']):
                 for i in range(daemon_count):
-                    with gr.Tab(f'{["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][i]}', elem_classes=['detail-daemon-tab']):
+                    with gr.Tab(ROMAN[i], elem_classes=['detail-daemon-tab']):
                         params_set = []
                         with gr.Row():
                             gr_active = gr.Checkbox(label="Active", value=False, min_width=60, elem_classes=['detail-daemon-active']) 
@@ -151,6 +240,18 @@ class Script(scripts.Script):
                         ]
                         all_params.extend(params_set)
 
+                        mirrors = {"amount": gr_amount_slider, "start_offset": gr_start_offset_slider,
+                                   "end_offset": gr_end_offset_slider}
+                        for mirror in mirrors.values():
+                            mirror.do_not_save_to_config = True
+                        _pending_tabs.append({
+                            "script": self, "index": i, "tabname": tabname,
+                            "saved": dict(zip(["active", "hires", "mode", "start", "end", "bias", "amount", "exponent",
+                                               "start_offset", "end_offset", "fade", "smooth"], params_set)),
+                            "mirrors": mirrors, "vis": gr_vis, "thumb": thumbs[i],
+                        })
+                        preset_outputs.extend(params_set + list(mirrors.values()) + [gr_vis, thumbs[i]])
+
                         # First tab should be backward compatible with the older single daemon Detail Daemon, hence the variable names without numbers
                         # older single daemon DD was backward compatible with yet older DD which had infotext with the DD_stuff format, so that's handled here too
                         if i == 0 :
@@ -185,6 +286,39 @@ class Script(scripts.Script):
                                 (gr_fade, lambda d, key=f'fade{tab_tag}': extract_infotext(d, key)),
                                 (gr_smooth, lambda d, key=f'smooth{tab_tag}': extract_infotext(d, key)),
                             ])
+            def apply_preset(name, cfg):
+                daemons = dd_presets.daemons_for(name, cfg)
+                keep = [gr.update()] * len(preset_outputs)
+                if daemons is None:
+                    return [gr.update(value="")] + keep
+                updates = []
+                for i in range(daemon_count):
+                    if i < len(daemons):
+                        d = daemons[i]
+                        vis, thumb = self.visualize(True, d["start"], d["end"], d["bias"], d["amount"], d["exponent"],
+                                                    d["start_offset"], d["end_offset"], d["fade"], d["smooth"],
+                                                    d["mode"], d["hires"])
+                        clamp = lambda v: min(max(v, -1.0), 1.0)
+                        updates += [gr.update(value=d[k]) for k in ("active", "hires", "mode", "start", "end", "bias",
+                                                                   "amount", "exponent", "start_offset", "end_offset",
+                                                                   "fade", "smooth")]
+                        updates += [gr.update(value=clamp(d["amount"])), gr.update(value=clamp(d["start_offset"])),
+                                    gr.update(value=clamp(d["end_offset"])), vis, thumb]
+                    else:
+                        # Unused tabs are switched off; their other values stay.
+                        updates += [gr.update(value=False)] + [gr.update()] * 16
+                about = dd_presets.PRESETS[name]["about"]
+                note = f"{about} Amounts set for CFG {float(cfg):g}." if cfg is not None else about
+                if len(daemons) > daemon_count:
+                    note += (f" This preset needs {len(daemons)} daemons: raise 'Daemon count' in "
+                             "Settings > Detail Daemon.")
+                return [gr.update(value=f"*{note}*")] + updates
+
+            cfg_input = [self.cfg_component] if self.cfg_component is not None else []
+            gr_preset.change(
+                fn=(lambda name, cfg: apply_preset(name, cfg)) if cfg_input else (lambda name: apply_preset(name, None)),
+                inputs=[gr_preset] + cfg_input, outputs=[gr_preset_about] + preset_outputs, show_progress=False)
+
         return all_params
     
     def process(self, p, enabled, *all_daemon_args):    
@@ -478,4 +612,4 @@ def xyz_support():
 try:
     xyz_support()
 except Exception as e:
-    tqdm.write(f'f"\033[31mDetail Daemon:\033[0m Error trying to add XYZ plot options for Detail Daemon: {e}')
+    tqdm.write(f'\033[31mDetail Daemon:\033[0m Error trying to add XYZ plot options for Detail Daemon: {e}')

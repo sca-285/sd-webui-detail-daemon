@@ -76,3 +76,25 @@
 .detail-daemon-tab-group .tab-nav .selected {
     z-index: 2 !important;
 }
+
+/*--------------------PRESETS------------------------*/
+
+/* Above the thumbnail strip, which is absolutely positioned (z-index 4),
+   so the open preset list is not covered by it. */
+.detail-daemon-preset-row {
+    position: relative;
+    z-index: 10 !important;
+    overflow: visible !important;
+}
+.detail-daemon-preset-about {
+    margin: 0 0 0.5em 0 !important;
+    opacity: 0.85;
+}
+.detail-daemon-preset-about p {
+    margin: 0 !important;
+}
+/* The thumbnails sit over the tab buttons; let clicks reach the buttons. */
+.detail-daemon-thumb-group,
+.detail-daemon-thumb-group * {
+    pointer-events: none !important;
+}
